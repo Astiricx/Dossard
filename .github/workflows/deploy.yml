@@ -1,0 +1,72 @@
+# deploy.yml — publie Dossard sur GitHub Pages à chaque envoi sur la branche main.
+# Étapes : installation, tests, compilation, puis mise en ligne du dossier dist.
+# Si un test échoue, rien n'est publié : le site garde sa version précédente.
+# Versions des actions : celles de l'exemple officiel de Vite (guide « Deploying a Static Site »).
+name: Publier sur GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:          # bouton « Run workflow » dans l'onglet Actions, pour republier à la main
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Une seule publication à la fois : un nouvel envoi annule celle en cours.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v7
+
+      - name: Installer Node.js
+        uses: actions/setup-node@v7
+        with:
+          # Node 24 (LTS) : les tests sont écrits en TypeScript et lancés directement par Node,
+          # ce qui demande Node 22.18 au minimum.
+          node-version: 24
+          cache: npm
+
+      - name: Installer les dépendances
+        run: npm ci
+
+      - name: Lancer les tests
+        run: node --test "tests/*.test.ts"
+
+      - name: Compiler
+        run: npm run build
+        env:
+          # Le site est servi sous https://<compte>.github.io/<dépôt>/ : les fichiers compilés
+          # doivent pointer vers ce sous-dossier. Le nom vient du dépôt lui-même, donc rien à
+          # modifier si le dépôt est renommé.
+          BASE_PATH: /${{ github.event.repository.name }}/
+
+      # Garde-fou : la clé Garmin ne doit jamais se retrouver dans le code publié.
+      - name: Vérifier qu'aucune clé Garmin n'est publiée
+        run: |
+          if grep -rIl "GCDC_" dist; then
+            echo "::error::Le dossier dist contient une chaîne « GCDC_ » : publication annulée."
+            exit 1
+          fi
+
+      - name: Préparer GitHub Pages
+        uses: actions/configure-pages@v6
+
+      - name: Envoyer le site
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: ./dist
+
+      - name: Publier
+        id: deployment
+        uses: actions/deploy-pages@v5
